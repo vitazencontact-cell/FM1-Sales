@@ -26,6 +26,7 @@ export interface Lead {
   status: LeadStatus;
   avatarUrl: string;
   lastUpdated?: string;
+  rowIndex?: number; // Added to track Google Sheet row number
 }
 
 export interface User {

@@ -8,6 +8,7 @@ interface HeaderProps {
   onViewChange: (view: 'leads' | 'dashboard') => void;
   onRefresh: () => void;
   isRefreshing: boolean;
+  onLogout: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({ 
@@ -15,7 +16,8 @@ export const Header: React.FC<HeaderProps> = ({
   currentView, 
   onViewChange, 
   onRefresh,
-  isRefreshing 
+  isRefreshing,
+  onLogout
 }) => {
   return (
     <header className="fixed top-0 left-0 right-0 bg-white shadow-sm z-30 h-16 px-4 flex items-center justify-between">
@@ -57,19 +59,30 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={onRefresh}
           disabled={isRefreshing}
           className={`p-2 rounded-full hover:bg-gray-100 text-gray-600 transition-all ${isRefreshing ? 'animate-spin text-emerald-600' : ''}`}
+          title="Refresh Data"
         >
           <RefreshCw size={20} />
         </button>
 
         <div className="h-6 w-px bg-gray-200"></div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-3 pl-1">
           <img 
             src={user.avatar} 
             alt={user.name}
             className="h-8 w-8 rounded-full object-cover border border-gray-200"
           />
-          <span className="text-sm font-medium text-gray-700 hidden sm:block">{user.name}</span>
+          <div className="hidden sm:block text-sm">
+            <p className="font-medium text-gray-700">{user.name}</p>
+          </div>
+          
+          <button 
+            onClick={onLogout}
+            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+            title="Sign Out"
+          >
+            <LogOut size={20} />
+          </button>
         </div>
       </div>
     </header>
