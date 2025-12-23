@@ -1,245 +1,202 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Users, 
-  BarChart3, 
-  ShieldCheck,
-  Layout,
-  AlertCircle
-} from 'lucide-react';
-import { Lead, ActionType, LeadStatus, User } from './types';
-import { Header } from './components/Header';
-import { LeadList } from './components/LeadList';
-import { Dashboard } from './components/Dashboard';
-import { ActionModal } from './components/ActionModal';
-import { initGapiClient, initGoogleAuth, signIn, signOut, fetchLeadsFromSheet, updateLeadStatusInSheet } from './lib/sheets';
+import React, { useEffect, useMemo, useState } from 'react';
+import './App.css';
+import { ApiResponse, ColisItem } from './types';
+
+const PAGE_SIZE = 100;
+
+const formatValue = (value: unknown) => {
+  if (value === undefined || value === null || value === '') {
+    return '—';
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+};
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<'leads' | 'dashboard'>('leads');
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [user, setUser] = useState<User | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isGapiReady, setIsGapiReady] = useState(false);
-  const [initError, setInitError] = useState<string | null>(null);
-  
-  // Modal State
-  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-  const [pendingActionType, setPendingActionType] = useState<ActionType | null>(null);
+  const [items, setItems] = useState<ColisItem[]>([]);
+  const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
 
-  // Initialize Google API
-  useEffect(() => {
-    const initialize = async () => {
-      try {
-        await initGapiClient();
-        setIsGapiReady(true);
-        
-        // Wait for GIS script to load if it hasn't
-        if (window.google) {
-            initGoogleAuth((loggedInUser) => {
-              setUser(loggedInUser);
-            });
-        } else {
-             const checkGoogle = setInterval(() => {
-                if (window.google) {
-                    clearInterval(checkGoogle);
-                    initGoogleAuth((loggedInUser) => {
-                        setUser(loggedInUser);
-                    });
-                }
-             }, 500);
-        }
-      } catch (error: any) {
-        console.error("Failed to initialize Google API", error);
-        setInitError(error.message || "Failed to load Google API");
+  const fetchPage = async (targetPage: number) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/colis?page=${targetPage}`);
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}));
+        throw new Error(errorPayload.message || 'Failed to fetch orders.');
       }
-    };
-    initialize();
+      const payload: ApiResponse = await response.json();
+      setItems(payload.items || []);
+      setPage(payload.page);
+      setPageSize(payload.pageSize || PAGE_SIZE);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unexpected error.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPage(page);
   }, []);
 
-  // Fetch leads when user logs in
-  useEffect(() => {
-    if (user && isGapiReady) {
-      handleRefresh();
-    }
-  }, [user, isGapiReady]);
-
-  const handleRefresh = async () => {
-    if (!user) return;
-    setIsRefreshing(true);
-    try {
-      const data = await fetchLeadsFromSheet();
-      setLeads(data);
-    } catch (error) {
-      console.error("Error fetching data", error);
-      // Don't alert immediately on load, just log
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  const handleLogout = () => {
-    signOut();
-    setUser(null);
-    setLeads([]);
-  };
-
-  const handleActionClick = (lead: Lead, type: ActionType) => {
-    setSelectedLead(lead);
-    setPendingActionType(type);
-    
-    // Perform external action
-    if (type === ActionType.CALL) {
-      window.open(`tel:${lead.phoneNumber}`, '_self');
-    } else if (type === ActionType.WHATSAPP) {
-      const cleanNumber = lead.phoneNumber.replace(/[^0-9]/g, '');
-      window.open(`https://wa.me/${cleanNumber}`, '_blank');
-    } else if (type === ActionType.SMS) {
-        window.open(`sms:${lead.phoneNumber}`, '_self');
-    }
-  };
-
-  const handleSaveAction = async (leadId: string, outcome: LeadStatus, notes: string) => {
-    const leadToUpdate = leads.find(l => l.leadId === leadId);
-    if (!leadToUpdate) return;
-
-    // Optimistic Update
-    setLeads(prevLeads => prevLeads.map(lead => {
-      if (lead.leadId === leadId) {
-        return {
-          ...lead,
-          status: outcome,
-          commentText: notes || lead.commentText, // Update notes in local state too
-          lastUpdated: new Date().toISOString()
-        };
+  const statusOptions = useMemo(() => {
+    const options = new Set<string>();
+    items.forEach((item) => {
+      if (item.etat) {
+        options.add(item.etat);
       }
-      return lead;
-    }));
+    });
+    return Array.from(options).sort();
+  }, [items]);
 
-    try {
-      await updateLeadStatusInSheet(leadToUpdate, outcome, notes);
-    } catch (error) {
-      console.error("Failed to save to sheet", error);
-      alert("Failed to save to Google Sheet. Please check your internet connection.");
-      // In a real app, revert optimistic update here
+  const filteredItems = useMemo(() => {
+    const lowerSearch = searchTerm.trim().toLowerCase();
+    return items.filter((item) => {
+      const matchesStatus = statusFilter ? item.etat === statusFilter : true;
+      const matchesSearch = lowerSearch
+        ? (item.code || '').toLowerCase().includes(lowerSearch)
+        : true;
+      return matchesStatus && matchesSearch;
+    });
+  }, [items, searchTerm, statusFilter]);
+
+  const extraColumns = useMemo(() => {
+    const columns = new Set<string>();
+    items.forEach((item) => {
+      if (item.extra) {
+        Object.keys(item.extra).forEach((key) => {
+          columns.add(key);
+        });
+      }
+    });
+    return Array.from(columns).sort();
+  }, [items]);
+
+  const handleRefresh = () => {
+    fetchPage(page);
+  };
+
+  const handlePrev = () => {
+    if (page > 1) {
+      fetchPage(page - 1);
     }
-
-    setSelectedLead(null);
-    setPendingActionType(null);
   };
 
-  const handleCloseModal = () => {
-    setSelectedLead(null);
-    setPendingActionType(null);
+  const handleNext = () => {
+    fetchPage(page + 1);
   };
 
-  if (initError) {
-      return (
-        <div className="flex h-screen items-center justify-center bg-gray-50 p-4">
-            <div className="bg-white p-8 rounded-xl shadow-lg max-w-md text-center">
-                <AlertCircle size={48} className="mx-auto text-red-500 mb-4" />
-                <h2 className="text-xl font-bold text-gray-900 mb-2">Initialization Error</h2>
-                <p className="text-gray-600 mb-4">{initError}</p>
-                <button 
-                    onClick={() => window.location.reload()}
-                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-medium"
-                >
-                    Retry
-                </button>
-            </div>
-        </div>
-      );
-  }
-
-  if (!isGapiReady) {
-     return (
-      <div className="flex h-screen items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600 mx-auto mb-4"></div>
-          <p className="text-gray-500 text-sm">Initializing Google Services...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="flex h-screen flex-col items-center justify-center bg-gray-50 p-4">
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-lg p-8 text-center">
-          <div className="h-16 w-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Layout size={32} />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">FM1 Sales</h1>
-          <p className="text-gray-500 mb-8">Sign in to manage your TikTok leads directly from Google Sheets.</p>
-          
-          <button 
-            onClick={signIn}
-            className="w-full flex items-center justify-center space-x-3 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium py-3 px-4 rounded-xl transition-all shadow-sm group"
-          >
-            <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-            <span>Sign in with Google</span>
-          </button>
-          
-          <div className="mt-6 flex items-center justify-center text-xs text-gray-400 space-x-1">
-             <ShieldCheck size={12} />
-             <span>Secure connection via Google OAuth</span>
-          </div>
-          
-          <div className="mt-4 text-xs text-gray-400">
-             <p>If you see a 400 or origin error, ensure your current URL is authorized in Google Cloud Console.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const hasNext = items.length === pageSize;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0">
-      <Header 
-        user={user} 
-        currentView={currentView}
-        onViewChange={setCurrentView}
-        onRefresh={handleRefresh}
-        isRefreshing={isRefreshing}
-        onLogout={handleLogout}
-      />
+    <div className="app">
+      <header className="app__header">
+        <div>
+          <p className="app__eyebrow">Vita Zen</p>
+          <h1>Colissimo Orders Dashboard</h1>
+          <p className="app__subtext">Track, filter, and search your Colissimo colis in real time.</p>
+        </div>
+        <button className="button button--secondary" onClick={handleRefresh} disabled={isLoading}>
+          {isLoading ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </header>
 
-      <main className="max-w-7xl mx-auto p-4 pt-20">
-        {currentView === 'dashboard' ? (
-          <Dashboard leads={leads} />
-        ) : (
-          <LeadList 
-            leads={leads} 
-            onAction={handleActionClick} 
+      <section className="app__controls">
+        <div className="control">
+          <label htmlFor="statusFilter">Status (Etat)</label>
+          <select
+            id="statusFilter"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+          >
+            <option value="">All statuses</option>
+            {statusOptions.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="control">
+          <label htmlFor="search">Search by code</label>
+          <input
+            id="search"
+            type="search"
+            placeholder="Search code..."
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
           />
-        )}
-      </main>
+        </div>
+        <div className="pagination">
+          <button className="button button--ghost" onClick={handlePrev} disabled={page <= 1 || isLoading}>
+            Prev
+          </button>
+          <span>Page {page}</span>
+          <button className="button button--ghost" onClick={handleNext} disabled={!hasNext || isLoading}>
+            Next
+          </button>
+        </div>
+      </section>
 
-      {/* Mobile Bottom Nav */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-6 py-3 flex justify-around items-center z-40">
-        <button 
-          onClick={() => setCurrentView('leads')}
-          className={`flex flex-col items-center space-y-1 ${currentView === 'leads' ? 'text-emerald-600' : 'text-gray-400'}`}
-        >
-          <Users size={24} />
-          <span className="text-xs font-medium">Leads</span>
-        </button>
-        <button 
-          onClick={() => setCurrentView('dashboard')}
-          className={`flex flex-col items-center space-y-1 ${currentView === 'dashboard' ? 'text-emerald-600' : 'text-gray-400'}`}
-        >
-          <BarChart3 size={24} />
-          <span className="text-xs font-medium">Stats</span>
-        </button>
-      </div>
+      {error && <div className="alert">{error}</div>}
 
-      {selectedLead && pendingActionType && (
-        <ActionModal
-          isOpen={true}
-          lead={selectedLead}
-          actionType={pendingActionType}
-          onClose={handleCloseModal}
-          onSave={handleSaveAction}
-        />
-      )}
+      <section className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Etat</th>
+              <th>Client</th>
+              <th>Montant</th>
+              <th>Tel</th>
+              <th>Adresse</th>
+              <th>Poids</th>
+              {extraColumns.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filteredItems.length === 0 && !isLoading && (
+              <tr>
+                <td colSpan={7 + extraColumns.length} className="empty">
+                  No orders found for the current filters.
+                </td>
+              </tr>
+            )}
+            {filteredItems.map((item) => (
+              <tr key={`${item.code}-${item.etat}-${item.client}`}>
+                <td className="highlight">{formatValue(item.code)}</td>
+                <td className="highlight">{formatValue(item.etat)}</td>
+                <td>{formatValue(item.client)}</td>
+                <td>{formatValue(item.montant)}</td>
+                <td>{formatValue(item.tel)}</td>
+                <td>{formatValue(item.adresse)}</td>
+                <td>{formatValue(item.poids)}</td>
+                {extraColumns.map((column) => (
+                  <td key={`${item.code}-${column}`}>{formatValue(item.extra?.[column])}</td>
+                ))}
+              </tr>
+            ))}
+            {isLoading && (
+              <tr>
+                <td colSpan={7 + extraColumns.length} className="loading">
+                  Loading Colissimo orders...
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
     </div>
   );
 };

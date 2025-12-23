@@ -1,20 +1,67 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Vita Zen – Colissimo Orders Dashboard
 
-# Run and deploy your AI Studio app
+A full-stack dashboard for viewing Colissimo orders (colis), filtering by status, and searching by code. The backend calls the official SOAP API and the frontend consumes a clean JSON API.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/drive/1481kSvGwKdefzPxLZd_Wds-LAo6DMLBL
+- SOAP-backed Node.js + Express API (`GET /api/colis?page=1`)
+- 2-minute caching per page to reduce SOAP calls
+- React dashboard with status filter, search, pagination, and refresh
+- Secure credential handling via environment variables (never exposed in the frontend)
 
-## Run Locally
+## Setup
 
-**Prerequisites:**  Node.js
+### 1) Install dependencies
 
+```bash
+npm install
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 2) Configure environment variables
+
+Create a `.env` file (or export variables in your shell) with:
+
+```bash
+COLISSIMO_USER=your_colissimo_username
+COLISSIMO_PASS=your_colissimo_password
+PORT=3001
+```
+
+### 3) Run the app
+
+```bash
+npm run dev
+```
+
+- Frontend: http://localhost:3000
+- Backend: http://localhost:3001
+
+## API Response Shape
+
+`GET /api/colis?page=1`
+
+```json
+{
+  "page": 1,
+  "pageSize": 100,
+  "items": [
+    {
+      "code": "...",
+      "etat": "...",
+      "client": "...",
+      "tel": "...",
+      "adresse": "...",
+      "montant": 0,
+      "poids": 0,
+      "extra": {
+        "OTHER_FIELD": "..."
+      }
+    }
+  ]
+}
+```
+
+## Notes
+
+- The API automatically maps known fields and preserves all other SOAP fields under `extra` so the UI can display everything available.
+- If authentication fails or the SOAP service errors, the API responds with a clear 401/500 message.
